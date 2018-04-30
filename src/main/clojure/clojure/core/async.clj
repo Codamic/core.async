@@ -456,7 +456,6 @@ the Java system property `clojure.core.async.pool-size`."
        c#)))
 
 
-
 (let [b (chan 1)
       a (go-block (println "----------------") (<! b))])
 

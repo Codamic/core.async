@@ -20,4 +20,6 @@
   ([^Runnable r]
    (run r executor))
   ([^Runnable r executor_]
-   (impl/exec @executor_ r)))
+   (if executor_
+     (impl/exec @executor_ r)
+     (impl/exec @executor r))))
