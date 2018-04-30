@@ -242,7 +242,7 @@
                set
                (mapcat
                 (fn [local]
-                  `[~(:form local) ~(get locals (:name local))]))) 
+                  `[~(:form local) ~(get locals (:name local))])))
         ~(:id this) ~(:form ast)]
       `[~(:id this) ~(:form ast)])))
 
@@ -956,17 +956,18 @@
   (identical? (aget-object state-array STATE-IDX) ::finished))
 
 (defn- fn-handler
-  [f]
+  [f e]
   (reify
-   Lock
-   (lock [_])
-   (unlock [_])
+    Lock
+    (lock [_])
+    (unlock [_])
 
-   impl/Handler
-   (active? [_] true)
-   (blockable? [_] true)
-   (lock-id [_] 0)
-   (commit [_] f)))
+    impl/Handler
+    (active? [_] true)
+    (blockable? [_] true)
+    (lock-id [_] 0)
+    (commit [_] f)
+    (executor [_] e)))
 
 
 (defn run-state-machine [state]
@@ -979,22 +980,30 @@
       (impl/close! (aget-object state USER-START-IDX))
       (throw ex))))
 
-(defn take! [state blk c]
-  (if-let [cb (impl/take! c (fn-handler
-                                   (fn [x]
-                                     (aset-all! state VALUE-IDX x STATE-IDX blk)
-                                     (run-state-machine-wrapped state))))]
-    (do (aset-all! state VALUE-IDX @cb STATE-IDX blk)
-        :recur)
-    nil))
+(defn take!
+  ([state blk c]
+   (take! state blk c nil))
+  ([state blk c executor]
+   (if-let [cb (impl/take! c (fn-handler
+                              (fn [x]
+                                (aset-all! state VALUE-IDX x STATE-IDX blk)
+                                (run-state-machine-wrapped state))
+                              executor))]
+     (do (aset-all! state VALUE-IDX @cb STATE-IDX blk)
+         :recur)
+     nil)))
 
-(defn put! [state blk c val]
-  (if-let [cb (impl/put! c val (fn-handler (fn [ret-val]
-                                             (aset-all! state VALUE-IDX ret-val STATE-IDX blk)
-                                             (run-state-machine-wrapped state))))]
-    (do (aset-all! state VALUE-IDX @cb STATE-IDX blk)
-        :recur)
-    nil))
+(defn put!
+  ([state blk c val]
+   (put! state blk c val nil))
+  ([state blk c val executor]
+   (if-let [cb (impl/put! c val (fn-handler (fn [ret-val]
+                                              (aset-all! state VALUE-IDX ret-val STATE-IDX blk)
+                                              (run-state-machine-wrapped state))
+                                            executor))]
+     (do (aset-all! state VALUE-IDX @cb STATE-IDX blk)
+         :recur)
+     nil)))
 
 (defn return-chan [state value]
   (let [c (aget-object state USER-START-IDX)]
