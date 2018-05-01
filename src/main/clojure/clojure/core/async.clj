@@ -455,10 +455,6 @@ the Java system property `clojure.core.async.pool-size`."
            (ioc/run-state-machine-wrapped state#))))
        c#)))
 
-
-(let [b (chan 1)
-      a (go-block (println "----------------") (<! b))])
-
 ;; ============================================================================
 
 
@@ -1222,3 +1218,9 @@ the Java system property `clojure.core.async.pool-size`."
                      (>! out (vec lst)))
                    (close! out))))))
      out)))
+
+
+(comment
+  (let [b (chan 2)
+        c (go (println "====================") (println (.getName (Thread/currentThread))) (<! b))
+        a (go-block (println "----------------") (println (.getName (Thread/currentThread))) (<! b))]))
