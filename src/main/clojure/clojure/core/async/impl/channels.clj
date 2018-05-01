@@ -117,25 +117,29 @@
                 (do (.unlock mutex)
                     nil))))
           (let [iter (.iterator takes)
-                [put-cb take-cb] (when (.hasNext iter)
-                                   (loop [^Lock taker (.next iter)]
-                                     (if (< (impl/lock-id handler) (impl/lock-id taker))
-                                       (do (.lock handler) (.lock taker))
-                                       (do (.lock taker) (.lock handler)))
-                                     (let [ret (when (and (impl/active? handler) (impl/active? taker))
-                                                 [(impl/commit handler) (impl/commit taker)])]
-                                       (.unlock handler)
-                                       (.unlock taker)
-                                       (if ret
-                                         (do
-                                           (.remove iter)
-                                           ret)
-                                         (when (.hasNext iter)
-                                           (recur (.next iter)))))))]
+
+                [[put-cb put-executor] [take-cb take-executor]]
+                (when (.hasNext iter)
+                  (loop [^Lock taker (.next iter)]
+                    (if (< (impl/lock-id handler) (impl/lock-id taker))
+                      (do (.lock handler) (.lock taker))
+                      (do (.lock taker) (.lock handler)))
+                    (let [ret (when (and (impl/active? handler) (impl/active? taker))
+                                [[(impl/commit handler) (impl/executor handler)]
+                                 [(impl/commit taker) (impl/executor taker)]])]
+                      (.unlock handler)
+                      (.unlock taker)
+                      (if ret
+                        (do
+                          (.remove iter)
+                          ret)
+                        (when (.hasNext iter)
+                          (recur (.next iter)))))))]
+
             (if (and put-cb take-cb)
               (do
                 (.unlock mutex)
-                (dispatch/run (fn [] (take-cb val)))
+                (dispatch/run (fn [] (take-cb val)) take-executor)
                 (box true))
               (if (and buf (not (impl/full? buf)))
                 (do
@@ -182,10 +186,11 @@
                     (loop [cbs []
                            [^Lock putter val] (.next iter)]
                       (.lock putter)
-                      (let [cb (and (impl/active? putter) (impl/commit putter))]
+                      (let [cb (and (impl/active? putter) (impl/commit putter))
+                            executor (if cb (impl/executor putter))]
                         (.unlock putter)
                         (.remove iter)
-                        (let [cbs (if cb (conj cbs cb) cbs)
+                        (let [cbs (if cb (conj cbs [cb executor]) cbs)
                               done? (when cb (reduced? (add! buf val)))]
                           (if (and (not done?) (not (impl/full? buf)) (.hasNext iter))
                             (recur cbs (.next iter))
@@ -193,20 +198,19 @@
               (when done?
                 (abort this))
               (.unlock mutex)
-              (doseq [cb cbs]
-                (dispatch/run #(cb true)))
+              (doseq [[cb executor] cbs]
+                (dispatch/run #(cb true) executor))
               (box val))
-            (do (.unlock mutex)
-                nil)))
+            (do (.unlock mutex) nil)))
         (let [iter (.iterator puts)
-              [take-cb put-cb val]
+              [take-cb put-cb put-executor val]
               (when (.hasNext iter)
                 (loop [[^Lock putter val] (.next iter)]
                   (if (< (impl/lock-id handler) (impl/lock-id putter))
                     (do (.lock handler) (.lock putter))
                     (do (.lock putter) (.lock handler)))
                   (let [ret (when (and (impl/active? handler) (impl/active? putter))
-                              [(impl/commit handler) (impl/commit putter) val])]
+                              [(impl/commit handler) (impl/commit putter) (impl/executor putter) val])]
                     (.unlock handler)
                     (.unlock putter)
                     (if ret
@@ -220,7 +224,7 @@
           (if (and put-cb take-cb)
             (do
               (.unlock mutex)
-              (dispatch/run #(put-cb true))
+              (dispatch/run #(put-cb true) put-executor)
               (box val))
             (if @closed
               (do
@@ -261,11 +265,12 @@
           (when (.hasNext iter)
             (loop [^Lock taker (.next iter)]
               (.lock taker)
-              (let [take-cb (and (impl/active? taker) (impl/commit taker))]
+              (let [take-cb (and (impl/active? taker) (impl/commit taker))
+                    executor (if taker-cb (impl/executor taker))]
                 (.unlock taker)
                 (when take-cb
                   (let [val (when (and buf (pos? (count buf))) (impl/remove! buf))]
-                    (dispatch/run (fn [] (take-cb val)))))
+                    (dispatch/run (fn [] (take-cb val) executor))))
                 (.remove iter)
                 (when (.hasNext iter)
                   (recur (.next iter)))))))
