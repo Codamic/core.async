@@ -14,6 +14,7 @@
 (set! *warn-on-reflection* true)
 
 (defonce executor (delay (tp/thread-pool-executor)))
+(defonce executor1 (delay (tp/thread-pool-executor "blocking-thread-%d")))
 
 (defn run
   "Runs Runnable r in a thread pool thread"
@@ -23,3 +24,7 @@
    (if executor_
      (impl/exec @executor_ r)
      (impl/exec @executor r))))
+
+(defn run-blocking
+  [^Runnable r]
+  (run r executor1))

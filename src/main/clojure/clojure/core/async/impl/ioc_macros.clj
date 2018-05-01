@@ -1007,10 +1007,10 @@
 
 (defn return-chan [state value]
   (let [c (aget-object state USER-START-IDX)]
-           (when-not (nil? value)
-             (impl/put! c value (fn-handler (fn [] nil))))
-           (impl/close! c)
-           c))
+    (when-not (nil? value)
+      (impl/put! c value (fn-handler (fn [] nil) nil)))
+    (impl/close! c)
+    c))
 
 
 (def async-custom-terminators

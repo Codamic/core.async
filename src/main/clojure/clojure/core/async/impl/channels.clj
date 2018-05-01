@@ -126,7 +126,8 @@
                       (do (.lock taker) (.lock handler)))
                     (let [ret (when (and (impl/active? handler) (impl/active? taker))
                                 [[(impl/commit handler) (impl/executor handler)]
-                                 [(impl/commit taker) (impl/executor taker)]])]
+                                 [(impl/commit taker)
+                                  (impl/executor taker)]])]
                       (.unlock handler)
                       (.unlock taker)
                       (if ret
@@ -266,7 +267,7 @@
             (loop [^Lock taker (.next iter)]
               (.lock taker)
               (let [take-cb (and (impl/active? taker) (impl/commit taker))
-                    executor (if taker-cb (impl/executor taker))]
+                    executor (if take-cb (impl/executor taker))]
                 (.unlock taker)
                 (when take-cb
                   (let [val (when (and buf (pos? (count buf))) (impl/remove! buf))]

@@ -32,9 +32,9 @@ the Java system property `clojure.core.async.pool-size`."
 (set! *warn-on-reflection* false)
 
 (defn fn-handler
-  ([f]
-   (fn-handler f true))
-  ([f blockable]
+  ([f e]
+   (fn-handler f e true))
+  ([f executor_ blockable]
    (reify
      Lock
      (lock [_])
@@ -44,7 +44,8 @@ the Java system property `clojure.core.async.pool-size`."
      (active? [_] true)
      (blockable? [_] blockable)
      (lock-id [_] 0)
-     (commit [_] f))))
+     (commit [_] f)
+     (executor [_] executor_))))
 
 (defn buffer
   "Returns a fixed buffer of size n. When full, puts will block/park."
@@ -108,7 +109,7 @@ the Java system property `clojure.core.async.pool-size`."
   if nothing is available."
   [port]
   (let [p (promise)
-        ret (impl/take! port (fn-handler (fn [v] (deliver p v))))]
+        ret (impl/take! port (fn-handler (fn [v] (deliver p v)) nil))]
     (if ret
       @ret
       (deref p))))
@@ -126,20 +127,20 @@ the Java system property `clojure.core.async.pool-size`."
    Returns nil."
   ([port fn1] (take! port fn1 true))
   ([port fn1 on-caller?]
-     (let [ret (impl/take! port (fn-handler fn1))]
-       (when ret
-         (let [val @ret]
-           (if on-caller?
-             (fn1 val)
-             (dispatch/run #(fn1 val)))))
-       nil)))
+   (let [ret (impl/take! port (fn-handler fn1 nil))]
+     (when ret
+       (let [val @ret]
+         (if on-caller?
+           (fn1 val)
+           (dispatch/run #(fn1 val) nil))))
+     nil)))
 
 (defn >!!
   "puts a val into port. nil values are not allowed. Will block if no
   buffer space is available. Returns true unless port is already closed."
   [port val]
   (let [p (promise)
-        ret (impl/put! port val (fn-handler (fn [open?] (deliver p open?))))]
+        ret (impl/put! port val (fn-handler (fn [open?] (deliver p open?)) nil))]
     (if ret
       @ret
       (deref p))))
@@ -152,7 +153,7 @@ the Java system property `clojure.core.async.pool-size`."
   (assert nil ">! used not in (go ...) block"))
 
 (defn- nop [_])
-(def ^:private fhnop (fn-handler nop))
+(def ^:private fhnop (fn-handler nop nil))
 
 (defn put!
   "Asynchronously puts a val into port, calling fn1 (if supplied) when
@@ -161,18 +162,18 @@ the Java system property `clojure.core.async.pool-size`."
    immediately accepted, will call fn1 on calling thread.  Returns
    true unless port is already closed."
   ([port val]
-     (if-let [ret (impl/put! port val fhnop)]
-       @ret
-       true))
+   (if-let [ret (impl/put! port val fhnop)]
+     @ret
+     true))
   ([port val fn1] (put! port val fn1 true))
   ([port val fn1 on-caller?]
-     (if-let [retb (impl/put! port val (fn-handler fn1))]
-       (let [ret @retb]
-         (if on-caller?
-           (fn1 ret)
-           (dispatch/run #(fn1 ret)))
-         ret)
-       true)))
+   (if-let [retb (impl/put! port val (fn-handler fn1 nil))]
+     (let [ret @retb]
+       (if on-caller?
+         (fn1 ret)
+         (dispatch/run #(fn1 ret)))
+       ret)
+     true)))
 
 (defn close!
   "Closes a channel. The channel will no longer accept any puts (they
@@ -219,19 +220,20 @@ the Java system property `clojure.core.async.pool-size`."
              (reset! flag nil)
              true))))
 
-(defn- alt-handler [^Lock flag cb]
+(defn- alt-handler [^Lock flag cb e]
   (reify
-     Lock
-     (lock [_] (.lock flag))
-     (unlock [_] (.unlock flag))
+    Lock
+    (lock [_] (.lock flag))
+    (unlock [_] (.unlock flag))
 
-     impl/Handler
-     (active? [_] (impl/active? flag))
-     (blockable? [_] true)
-     (lock-id [_] (impl/lock-id flag))
-     (commit [_]
-             (impl/commit flag)
-             cb)))
+    impl/Handler
+    (active? [_] (impl/active? flag))
+    (blockable? [_] true)
+    (lock-id [_] (impl/lock-id flag))
+    (commit [_]
+      (impl/commit flag)
+      cb)
+    (executor [_] e)))
 
 (defn do-alts
   "returns derefable [val port] if immediate, nil if enqueued"
@@ -248,8 +250,8 @@ the Java system property `clojure.core.async.pool-size`."
                   wport (when (vector? port) (port 0))
                   vbox (if wport
                          (let [val (port 1)]
-                           (impl/put! wport val (alt-handler flag #(fret [% wport]))))
-                         (impl/take! port (alt-handler flag #(fret [% port]))))]
+                           (impl/put! wport val (alt-handler flag #(fret [% wport]) nil)))
+                         (impl/take! port (alt-handler flag #(fret [% port]) nil)))]
               (if vbox
                 (channels/box [@vbox (or wport port)])
                 (recur (inc i))))))]
@@ -390,14 +392,14 @@ the Java system property `clojure.core.async.pool-size`."
   "Puts a val into port if it's possible to do so immediately.
    nil values are not allowed. Never blocks. Returns true if offer succeeds."
   [port val]
-  (let [ret (impl/put! port val (fn-handler nop false))]
+  (let [ret (impl/put! port val (fn-handler nop nil false))]
     (when ret @ret)))
 
 (defn poll!
   "Takes a val from port if it's possible to do so immediately.
    Never blocks. Returns value if successful, nil otherwise."
   [port]
-  (let [ret (impl/take! port (fn-handler nop false))]
+  (let [ret (impl/take! port (fn-handler nop nil false))]
     (when ret @ret)))
 
 (defmacro go
@@ -425,7 +427,6 @@ the Java system property `clojure.core.async.pool-size`."
        c#)))
 
 ;; TODO: Remove the debug code ================================================
-(def executor1 (delay (tp/thread-pool-executor)))
 
 (defmacro go-block
   "Asynchronously executes the given `body` in a thread pool dedicated
@@ -444,15 +445,14 @@ the Java system property `clojure.core.async.pool-size`."
     (clojure.pprint/pprint crossing-env)
     `(let [c# (chan 1)
            captured-bindings# (clojure.lang.Var/getThreadBindingFrame)]
-       (dispatch/run
-         (^:once fn* []
-          (let [~@(mapcat (fn [[l sym]] [sym `(^:once fn* [] ~(vary-meta l dissoc :tag))]) crossing-env)
-                f# ~(ioc/state-machine `(do ~@body) 1 [crossing-env &env] ioc/async-custom-terminators)
-                state# (-> (f#)
-                           (ioc/aset-all! ioc/USER-START-IDX c#
-                                          ioc/BINDINGS-IDX captured-bindings#))]
-            (ioc/run-state-machine-wrapped state#)))
-         executor1)
+       (dispatch/run-blocking
+        (^:once fn* []
+         (let [~@(mapcat (fn [[l sym]] [sym `(^:once fn* [] ~(vary-meta l dissoc :tag))]) crossing-env)
+               f# ~(ioc/state-machine `(do ~@body) 1 [crossing-env &env] ioc/async-custom-terminators)
+               state# (-> (f#)
+                          (ioc/aset-all! ioc/USER-START-IDX c#
+                                         ioc/BINDINGS-IDX captured-bindings#))]
+           (ioc/run-state-machine-wrapped state#))))
        c#)))
 
 
@@ -1202,23 +1202,23 @@ the Java system property `clojure.core.async.pool-size`."
   "Deprecated - this function will be removed. Use transducer instead"
   {:deprecated "0.1.319.0-6b1aca-alpha"}
   ([f ch]
-     (partition-by f ch nil))
+   (partition-by f ch nil))
   ([f ch buf-or-n]
-     (let [out (chan buf-or-n)]
-       (go (loop [lst (ArrayList.)
-                  last ::nothing]
-             (let [v (<! ch)]
-               (if (not (nil? v))
-                 (let [new-itm (f v)]
-                   (if (or (= new-itm last)
-                           (identical? last ::nothing))
-                     (do (.add ^ArrayList lst v)
-                         (recur lst new-itm))
-                     (do (>! out (vec lst))
-                         (let [new-lst (ArrayList.)]
-                           (.add ^ArrayList new-lst v)
-                           (recur new-lst new-itm)))))
-                 (do (when (> (.size ^ArrayList lst) 0)
-                       (>! out (vec lst)))
-                     (close! out))))))
-       out)))
+   (let [out (chan buf-or-n)]
+     (go (loop [lst (ArrayList.)
+                last ::nothing]
+           (let [v (<! ch)]
+             (if (not (nil? v))
+               (let [new-itm (f v)]
+                 (if (or (= new-itm last)
+                         (identical? last ::nothing))
+                   (do (.add ^ArrayList lst v)
+                       (recur lst new-itm))
+                   (do (>! out (vec lst))
+                       (let [new-lst (ArrayList.)]
+                         (.add ^ArrayList new-lst v)
+                         (recur new-lst new-itm)))))
+               (do (when (> (.size ^ArrayList lst) 0)
+                     (>! out (vec lst)))
+                   (close! out))))))
+     out)))

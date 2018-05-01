@@ -22,10 +22,11 @@
              8)))
 
 (defn thread-pool-executor
-  []
-  (let [executor-svc (Executors/newFixedThreadPool
-                      @pool-size
-                      (conc/counted-thread-factory "async-dispatch-%d" true))]
-    (reify impl/Executor
-      (impl/exec [this r]
-        (.execute executor-svc ^Runnable r)))))
+  ([] (thread-pool-executor "async-dispatch-%d"))
+  ([group-name]
+   (let [executor-svc (Executors/newFixedThreadPool
+                       @pool-size
+                       (conc/counted-thread-factory group-name true))]
+     (reify impl/Executor
+       (impl/exec [this r]
+         (.execute executor-svc ^Runnable r))))))
