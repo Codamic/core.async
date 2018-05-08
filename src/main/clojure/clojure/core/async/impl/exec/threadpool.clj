@@ -21,11 +21,26 @@
                (Long/parseLong prop))
              8)))
 
+(def main-executor
+  (atom (Executors/newFixedThreadPool
+         @pool-size
+         (conc/counted-thread-factory "async-dispatch-%d" true))))
+
+(def thread-macro-executor
+  (atom (Executors/newCachedThreadPool
+         (conc/counted-thread-factory "async-thread-macro-%d" true))))
+
+(defn set-executor!
+  [executor]
+  (reset! main-executor executor))
+
+(defn set-thread-executor!
+  [executor]
+  (reset! thread-macro-executor executor))
+
 (defn thread-pool-executor
   []
-  (let [executor-svc (Executors/newFixedThreadPool
-                      @pool-size
-                      (conc/counted-thread-factory "async-dispatch-%d" true))]
+  (let [executor-svc @main-executor]
     (reify impl/Executor
       (impl/exec [this r]
         (.execute executor-svc ^Runnable r)))))

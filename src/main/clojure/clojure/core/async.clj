@@ -9,9 +9,9 @@
 (ns clojure.core.async
   "Facilities for async programming and communication.
 
-go blocks are dispatched over an internal thread pool, which
-defaults to 8 threads. The size of this pool can be modified using
-the Java system property `clojure.core.async.pool-size`."
+  go blocks are dispatched over an internal thread pool, which
+  defaults to 8 threads. The size of this pool can be modified using
+  the Java system property `clojure.core.async.pool-size`."
   (:refer-clojure :exclude [reduce transduce into merge map take partition
                             partition-by bounded-count])
   (:require [clojure.core.async.impl.protocols :as impl]
@@ -22,6 +22,7 @@ the Java system property `clojure.core.async.pool-size`."
             [clojure.core.async.impl.ioc-macros :as ioc]
             [clojure.core.async.impl.mutex :as mutex]
             [clojure.core.async.impl.concurrent :as conc]
+            [clojure.core.async.impl.exec.threadpool :as tp]
             )
   (:import [java.util.concurrent.locks Lock]
            [java.util.concurrent Executors Executor ThreadLocalRandom]
@@ -424,9 +425,6 @@ the Java system property `clojure.core.async.pool-size`."
             (ioc/run-state-machine-wrapped state#))))
        c#)))
 
-(defonce ^:private ^Executor thread-macro-executor
-  (Executors/newCachedThreadPool (conc/counted-thread-factory "async-thread-macro-%d" true)))
-
 (defn thread-call
   "Executes f in another thread, returning immediately to the calling
   thread. Returns a channel which will receive the result of calling
@@ -434,7 +432,7 @@ the Java system property `clojure.core.async.pool-size`."
   [f]
   (let [c (chan 1)]
     (let [binds (clojure.lang.Var/getThreadBindingFrame)]
-      (.execute thread-macro-executor
+      (.execute @tp/thread-macro-executor
                 (fn []
                   (clojure.lang.Var/resetThreadBindingFrame binds)
                   (try
